@@ -1,0 +1,49 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# testing
+/coverage
+
+# production
+/out
+/dist
+/build
+
+# next.js build output
+.next/
+out/
+.vercel/
+
+# next.js cache (Next 14+)
+.next/cache
+
+# next.js image optimizer cache (Next 14+)
+.next/static/image-cache
+
+# dotenv
+.env.local
+.env.*.local
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# next-i18next (optional, if you use this library)
+# .next-i18next
+
+# Mac/OS X
+.DS_Store
+
+# VS Code directory (optional, but generally recommended)
+.vscode/
+
+# Editor/OS specific files
+Thumbs.db
+
+# Turborepo (If you are using it in a monorepo setup)
+.turbo
