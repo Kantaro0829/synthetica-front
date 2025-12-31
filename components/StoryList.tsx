@@ -1,11 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface Comment {
     id: number;
-    user: string;
+    user: { name: string };
     text: string;
+}
+
+interface Like {
+    user_id: number;
 }
 
 interface Post {
@@ -15,52 +19,50 @@ interface Post {
     author: string;
     date: string;
     comments: Comment[];
+    likes: Like[];
+    liked: boolean; // From API
 }
 
-const MOCK_POSTS: Post[] = [
-    {
-        id: 1,
-        title: "From Sketch to Symphony: My Journey with Synthetica",
-        content: "I've always had melodies in my head but never knew how to transcribe them. Synthetica's audio engine took my hummed notes and turned them into a full orchestral arrangement. It's not just a tool; it's a collaborator that speaks my language.",
-        author: "MelodyMaker",
-        date: "Oct 12, 2024",
-        comments: [
-            { id: 101, user: "AudioPhile", text: "This is inspiring! Did you use the new harmonics plugin?" },
-            { id: 102, user: "MelodyMaker", text: "Yes! It added so much depth to the strings section." }
-        ]
-    },
-    {
-        id: 2,
-        title: "Breaking Writer's Block with AI Prompts",
-        content: "I was stuck on Chapter 5 of my sci-fi novel for weeks. One session with the creative writing assistant helped me visualize the alien landscape I was trying to describe. The descriptive power is unmatched.",
-        author: "SciFiScribe",
-        date: "Nov 03, 2024",
-        comments: [
-            { id: 201, user: "ReadMore", text: "Can't wait to read the final book!" },
-            { id: 202, user: "PenPal", text: "I struggle with landscapes too. Giving this a try." }
-        ]
-    },
-    {
-        id: 3,
-        title: "Visualizing Data for Non-Profits",
-        content: "We needed to show our donors exactly where their money was going. Synthetica's visualization tools allowed us to turn dry spreadsheets into an interactive 3D map of our impact. Donations are up 20% this quarter.",
-        author: "NGO_Tech",
-        date: "Nov 15, 2024",
-        comments: [
-            { id: 301, user: "DataWiz", text: "That's a powerful use case. Well done." }
-        ]
-    }
-];
+
 
 type Tab = "YourStory" | "AllStories";
 
 export default function StoryList() {
-    const [posts, setPosts] = useState<Post[]>(MOCK_POSTS);
+    const [posts, setPosts] = useState<Post[]>([]);
     const [expandedPostIds, setExpandedPostIds] = useState<Set<number>>(new Set());
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newTitle, setNewTitle] = useState("");
     const [newContent, setNewContent] = useState("");
-    const [activeTab, setActiveTab] = useState<Tab>("YourStory");
+    const [activeTab, setActiveTab] = useState<Tab>("AllStories");
+
+
+    useEffect(() => {
+        const fetchStories = async () => {
+            try {
+                const response = await fetch("http://localhost:8080/stories", {
+                    credentials: "include",
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    const mappedPosts = data.map((story: { id: number; title: string; detail: string; user: { name: string }; created_at: string; comments: Comment[]; likes: Like[]; liked: boolean }) => ({
+                        id: story.id,
+                        title: story.title,
+                        content: story.detail,
+                        author: story.user?.name || "Unknown",
+                        date: new Date(story.created_at).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }),
+                        comments: story.comments || [],
+                        likes: story.likes || [],
+                        liked: story.liked || false,
+                    }));
+                    setPosts(mappedPosts);
+                }
+            } catch (error) {
+                console.error("Failed to fetch stories:", error);
+            }
+        };
+
+        fetchStories();
+    }, []);
 
     const togglePost = (id: number) => {
         const newExpanded = new Set(expandedPostIds);
@@ -72,23 +74,122 @@ export default function StoryList() {
         setExpandedPostIds(newExpanded);
     };
 
-    const handlePost = () => {
+    const handleLike = async (postId: number, e: React.MouseEvent) => {
+        e.stopPropagation(); // Prevent toggling post expansion
+
+        // Optimistic update
+        setPosts(posts.map(post => {
+            if (post.id === postId) {
+                return {
+                    ...post,
+                    liked: true,
+                    likes: [...post.likes, { user_id: 0 }] // Placeholder ID for count
+                };
+            }
+            return post;
+        }));
+
+        try {
+            const response = await fetch(`http://localhost:8080/stories/${postId}/like`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                credentials: "include",
+                body: JSON.stringify({}),
+            });
+
+            if (!response.ok) {
+                if (response.status === 401) {
+                    alert("Please login to like stories.");
+                    // Revert optimistic update
+                    setPosts(posts.map(post => {
+                        if (post.id === postId) {
+                            return {
+                                ...post,
+                                liked: false,
+                                likes: post.likes.filter(l => l.user_id !== 0)
+                            };
+                        }
+                        return post;
+                    }));
+                    return;
+                }
+                const err = await response.json();
+                console.error("Failed to like story:", err);
+
+                // Revert optimistic update on error
+                setPosts(posts.map(post => {
+                    if (post.id === postId) {
+                        return {
+                            ...post,
+                            liked: false,
+                            likes: post.likes.filter(l => l.user_id !== 0)
+                        };
+                    }
+                    return post;
+                }));
+                return;
+            }
+
+            // Success - state already updated optimistically
+        } catch (error) {
+            console.error("Error liking story:", error);
+            // Revert optimistic update
+            setPosts(posts.map(post => {
+                if (post.id === postId) {
+                    return {
+                        ...post,
+                        liked: false,
+                        likes: post.likes.filter(l => l.user_id !== 0)
+                    };
+                }
+                return post;
+            }));
+        }
+    };
+
+    const handlePost = async () => {
         if (!newTitle.trim() || !newContent.trim()) return;
 
-        const newPost: Post = {
-            id: Date.now(), // Simpe ID generation
-            title: newTitle,
-            content: newContent,
-            author: "You", // Default author
-            date: new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }),
-            comments: []
-        };
+        try {
+            const response = await fetch("http://localhost:8080/stories", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    title: newTitle,
+                    detail: newContent,
+                }),
+            });
 
-        setPosts([newPost, ...posts]);
-        setNewTitle("");
-        setNewContent("");
-        setIsModalOpen(false);
-        setActiveTab("AllStories"); // Switch to list view
+            if (!response.ok) {
+                throw new Error("Failed to post story");
+            }
+
+            const data = await response.json();
+
+            const newPost: Post = {
+                id: data.id,
+                title: data.title,
+                content: data.detail,
+                author: "You", // Default author from response if available, or static
+                date: new Date(data.created_at).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }),
+                comments: [],
+                likes: [],
+                liked: false
+            };
+
+            setPosts([newPost, ...posts]);
+            setNewTitle("");
+            setNewContent("");
+            setIsModalOpen(false);
+            setActiveTab("AllStories"); // Switch to list view
+        } catch (error) {
+            console.error("Error posting story:", error);
+            alert("Failed to post story. Please try again.");
+        }
     };
 
     const handleCancel = () => {
@@ -99,7 +200,6 @@ export default function StoryList() {
 
     return (
         <div className="w-full max-w-2xl space-y-4">
-            {/* Tab Navigation */}
             {/* Tab Navigation */}
             <div className="flex justify-center mb-8">
                 <div className="inline-flex rounded-lg border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-900 shadow-sm">
@@ -184,7 +284,7 @@ export default function StoryList() {
             {activeTab === "YourStory" && (
                 <div className="flex flex-col items-center justify-center py-20 animate-in fade-in slide-in-from-bottom-4 duration-300">
                     <p className="text-zinc-600 dark:text-zinc-400 mb-8 text-center max-w-md text-lg">
-                        Have you used Synthetica? We'd love to hear how it's changed your creative workflow.
+                        Have you used Synthetica? We&apos;d love to hear how it&apos;s changed your creative workflow.
                     </p>
                     <button
                         onClick={() => setIsModalOpen(true)}
@@ -212,6 +312,8 @@ export default function StoryList() {
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
                     {posts.map((post) => {
                         const isExpanded = expandedPostIds.has(post.id);
+                        const isLikedByMe = post.liked;
+
                         return (
                             <div
                                 key={post.id}
@@ -222,13 +324,41 @@ export default function StoryList() {
                                     className="w-full px-6 py-4 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors focus:outline-none"
                                 >
                                     <div className="flex items-center justify-between">
-                                        <div>
+                                        <div className="flex-1">
                                             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">
                                                 {post.title}
                                             </h3>
-                                            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                                                By {post.author} • {post.date}
-                                            </p>
+                                            <div className="flex items-center space-x-4 mt-2">
+                                                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                                                    By {post.author} • {post.date}
+                                                </p>
+                                                {/* Social Counts */}
+                                                <div className="flex items-center space-x-3 text-sm text-zinc-500 dark:text-zinc-400">
+                                                    <div
+                                                        className={`flex items-center space-x-1 ${!isLikedByMe ? "cursor-pointer hover:text-pink-600" : "cursor-default drop-shadow-sm"}`}
+                                                        onClick={(e) => !isLikedByMe && handleLike(post.id, e)}
+                                                    >
+                                                        {isLikedByMe ? (
+                                                            /* Filled Heart */
+                                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-pink-500" viewBox="0 0 20 20" fill="currentColor">
+                                                                <path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" />
+                                                            </svg>
+                                                        ) : (
+                                                            /* Outline Heart */
+                                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-pink-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                                                <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                                                            </svg>
+                                                        )}
+                                                        <span>{post.likes.length}</span>
+                                                    </div>
+                                                    <div className="flex items-center space-x-1">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                                                        </svg>
+                                                        <span>{post.comments.length}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
                                         <span className={`transform transition-transform duration-200 text-zinc-400 ${isExpanded ? "rotate-180" : ""}`}>
                                             ▼
@@ -251,7 +381,7 @@ export default function StoryList() {
                                                     post.comments.map((comment) => (
                                                         <div key={comment.id} className="text-sm">
                                                             <span className="font-bold text-zinc-700 dark:text-zinc-300 mr-2">
-                                                                {comment.user}:
+                                                                {comment.user.name || "User"}:
                                                             </span>
                                                             <span className="text-zinc-600 dark:text-zinc-400">
                                                                 {comment.text}
